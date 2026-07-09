@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Convoy Buster 3D</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="theme-color" content="#1a1510">
 <style>
   html, body { margin:0; padding:0; overflow:hidden; background:#000; font-family:'Courier New', monospace; }
   #c { display:block; }
@@ -110,7 +114,7 @@
   </div>
   <div id="touchButtons">
     <button id="btnWeapon1" class="tbtn active">[1] RPG</button>
-    <button id="btnWeapon2" class="tbtn">[2] DUSHKA</button>
+    <button id="btnWeapon2" class="tbtn">[2] AK-47</button>
     <button id="btnJump" class="tbtn">JUMP</button>
     <button id="btnFire" class="tbtn">FIRE</button>
   </div>
@@ -120,7 +124,7 @@
   </div>
   <div id="weaponBar">
     <div class="wbox active" id="wbox-rpg">[1] RPG — <span id="rpgAmmo">4</span></div>
-    <div class="wbox" id="wbox-dushka">[2] DUSHKA — ∞</div>
+    <div class="wbox" id="wbox-dushka">[2] AK-47 — ∞</div>
   </div>
   <div id="heatBarWrap"><div id="heatFill"></div></div>
   <div id="hitFlash"></div>
@@ -131,8 +135,8 @@
   <p id="introText">
     You're holding a ridge outpost. An armored convoy is pushing up the desert road toward you.<br><br>
     Left joystick to move. Drag anywhere on screen to look around.<br>
-    Tap <b>[1] RPG</b> / <b>[2] DUSHKA</b> to switch weapons, tap <b>JUMP</b> to hop the sandbags.<br>
-    Hold <b>FIRE</b> to shoot — RPG is one shot per tap, Dushka fires while held.<br><br>
+    Tap <b>[1] RPG</b> / <b>[2] AK-47</b> to switch weapons, tap <b>JUMP</b> to hop the sandbags.<br>
+    Hold <b>FIRE</b> to shoot — RPG is one shot per tap, AK-47 fires while held.<br><br>
     Destroy every vehicle before it reaches your line.
   </p>
   <button id="startBtn">START AMBUSH</button>
@@ -141,7 +145,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 let scene, camera, renderer, clock;
-let weaponGroup, rpgModel, dushkaModel;
+let weaponGroup, rpgModel, akModel;
 let ground, skyDome;
 let raycaster;
 
@@ -174,6 +178,12 @@ const state = {
 };
 
 const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('service-worker.js').catch(()=>{});
+  });
+}
 
 // ---------- audio ----------
 let audioCtx = null;
@@ -281,6 +291,38 @@ function init() {
   animate();
 }
 
+function makeSandTexture() {
+  const size = 512;
+  const cnv = document.createElement('canvas');
+  cnv.width = cnv.height = size;
+  const ctx2d = cnv.getContext('2d');
+  ctx2d.fillStyle = '#c9a876';
+  ctx2d.fillRect(0,0,size,size);
+  // grain speckle
+  for (let i=0;i<28000;i++){
+    const x = Math.random()*size, y = Math.random()*size;
+    const shade = Math.random();
+    ctx2d.fillStyle = shade < 0.5
+      ? `rgba(90,65,35,${0.05+Math.random()*0.1})`
+      : `rgba(240,220,170,${0.05+Math.random()*0.12})`;
+    ctx2d.fillRect(x,y,1.4,1.4);
+  }
+  // soft dune streaks
+  for (let i=0;i<40;i++){
+    ctx2d.strokeStyle = `rgba(120,90,50,${0.04+Math.random()*0.06})`;
+    ctx2d.lineWidth = 4+Math.random()*10;
+    ctx2d.beginPath();
+    const y0 = Math.random()*size;
+    ctx2d.moveTo(0, y0);
+    ctx2d.bezierCurveTo(size*0.3, y0+(Math.random()-0.5)*80, size*0.7, y0+(Math.random()-0.5)*80, size, y0+(Math.random()-0.5)*40);
+    ctx2d.stroke();
+  }
+  const tex = new THREE.CanvasTexture(cnv);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(60,60);
+  return tex;
+}
+
 function buildWorld() {
   // sky dome
   const skyGeo = new THREE.SphereGeometry(400, 24, 16);
@@ -309,7 +351,7 @@ function buildWorld() {
     posAttr.setZ(i, Math.sin(x*0.05)*0.6 + Math.cos(y*0.04)*0.6 + (Math.random()-0.5)*0.3);
   }
   groundGeo.computeVertexNormals();
-  const groundMat = new THREE.MeshStandardMaterial({ color: 0xc9a876, roughness:1 });
+  const groundMat = new THREE.MeshStandardMaterial({ map: makeSandTexture(), roughness:1 });
   ground = new THREE.Mesh(groundGeo, groundMat);
   ground.rotation.x = -Math.PI/2;
   ground.receiveShadow = true;
@@ -346,7 +388,90 @@ function buildWorld() {
     scene.add(rock);
   }
 
-  // sandbag perimeter around player bunker
+  buildRuinedTown();
+
+  function buildRuinedTown() {
+  const wallMat = new THREE.MeshStandardMaterial({ color:0xb99a6e, roughness:1 });
+  const wallMatDark = new THREE.MeshStandardMaterial({ color:0x9a7d54, roughness:1 });
+  const rubbleMat = new THREE.MeshStandardMaterial({ color:0x8a7350, roughness:1 });
+  const charredMat = new THREE.MeshStandardMaterial({ color:0x2a2622, roughness:1 });
+  const rebarMat = new THREE.MeshStandardMaterial({ color:0x3a3530, roughness:0.6, metalness:0.5 });
+
+  function ruinedHouse(x, z, seed) {
+    const house = new THREE.Group();
+    const w = 5 + seed%3, d = 5 + (seed*3)%4, fullH = 3.2;
+
+    // four walls, each with random damage: partial height, blown-out holes, or fully collapsed
+    const wallDefs = [
+      { w:w, pos:[0,0,-d/2], rotY:0 },
+      { w:w, pos:[0,0,d/2], rotY:0 },
+      { w:d, pos:[-w/2,0,0], rotY:Math.PI/2 },
+      { w:d, pos:[w/2,0,0], rotY:Math.PI/2 }
+    ];
+    wallDefs.forEach((wd, i) => {
+      const damage = (seed + i*7) % 5;
+      if (damage === 0) return; // wall fully gone
+      const h = damage >= 3 ? fullH : fullH * (0.3 + (damage/5));
+      const mat = (seed+i)%4===0 ? charredMat : (i%2===0?wallMat:wallMatDark);
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(wd.w, h, 0.3), mat);
+      wall.position.set(wd.pos[0], h/2, wd.pos[2]);
+      wall.rotation.y = wd.rotY;
+      wall.castShadow = true; wall.receiveShadow = true;
+      house.add(wall);
+      // jagged broken top using small angled offcuts
+      if (damage < 3) {
+        for (let j=0;j<3;j++){
+          const chip = new THREE.Mesh(new THREE.BoxGeometry(wd.w/4, 0.4+Math.random()*0.5, 0.3), mat);
+          chip.position.set(wd.pos[0] + (j-1)*(wd.w/3.2), h + 0.2, wd.pos[2]);
+          chip.rotation.y = wd.rotY;
+          chip.rotation.z = (Math.random()-0.5)*0.5;
+          house.add(chip);
+        }
+      }
+      // exposed rebar on badly damaged walls
+      if (damage <= 2) {
+        for (let j=0;j<2;j++){
+          const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.02,0.02,1.2,5), rebarMat);
+          bar.position.set(wd.pos[0]+(Math.random()-0.5)*wd.w*0.6, h, wd.pos[2]);
+          bar.rotation.z = 0.3+Math.random()*0.6;
+          house.add(bar);
+        }
+      }
+    });
+
+    // partially collapsed roof slab (tilted)
+    if (seed % 3 !== 0) {
+      const roof = new THREE.Mesh(new THREE.BoxGeometry(w*0.9, 0.25, d*0.9), rubbleMat);
+      roof.position.set(seed%2===0 ? -w*0.15:w*0.1, fullH*0.55, 0);
+      roof.rotation.z = (seed%2===0 ? 1:-1) * 0.28;
+      roof.rotation.x = 0.12;
+      roof.castShadow = true;
+      house.add(roof);
+    }
+
+    // rubble pile at base
+    for (let i=0;i<10;i++){
+      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.25+Math.random()*0.5,0), rubbleMat);
+      rock.position.set((Math.random()-0.5)*w*1.1, 0.15, (Math.random()-0.5)*d*1.1);
+      rock.rotation.set(Math.random(),Math.random(),Math.random());
+      rock.castShadow = true; rock.receiveShadow = true;
+      house.add(rock);
+    }
+
+    house.position.set(x, 0, z);
+    house.rotation.y = (seed*1.3) % (Math.PI*2);
+    scene.add(house);
+  }
+
+  // scatter ruined houses along both sides of the road, clear of the road itself and the player bunker
+  const positions = [
+    [-24,-40],[26,-55],[-30,-75],[22,-90],[-20,-110],[28,-125],
+    [-26,-145],[24,-160],[-22,-25],[30,-30],[-32,-100],[20,-135]
+  ];
+  positions.forEach((p, i) => ruinedHouse(p[0], p[1], i+3));
+}
+
+// sandbag perimeter around player bunker
   const bagMat = new THREE.MeshStandardMaterial({ color:0x6b5535, roughness:1 });
   for (let x=-14; x<=14; x+=1.4){
     const bag = new THREE.Mesh(new THREE.SphereGeometry(0.9,8,6), bagMat);
@@ -371,60 +496,149 @@ function buildWeapons() {
   camera.add(weaponGroup);
   scene.add(camera);
 
-  // --- RPG model ---
-  rpgModel = new THREE.Group();
-  const tubeMat = new THREE.MeshStandardMaterial({ color:0x3a3a30, roughness:0.6 });
-  const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.06,1.3,10), tubeMat);
-  tube.rotation.z = Math.PI/2;
-  tube.position.set(0.15, -0.05, -0.6);
-  rpgModel.add(tube);
-  const warhead = new THREE.Mesh(new THREE.ConeGeometry(0.09,0.28,10), new THREE.MeshStandardMaterial({color:0x556b3a}));
-  warhead.rotation.z = -Math.PI/2;
-  warhead.position.set(0.15, -0.05, -1.35);
-  rpgModel.add(warhead);
-  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.06,0.18,0.08), tubeMat);
-  grip.position.set(0.15,-0.22,-0.35);
-  rpgModel.add(grip);
-  // hand/arms holding rpg
+  const metalMat = new THREE.MeshStandardMaterial({ color:0x1c1c1c, roughness:0.4, metalness:0.7 });
+  const metalMatLight = new THREE.MeshStandardMaterial({ color:0x2e2e2e, roughness:0.45, metalness:0.6 });
+  const woodMat = new THREE.MeshStandardMaterial({ color:0x6b4426, roughness:0.75, metalness:0.05 });
   const skinMat = new THREE.MeshStandardMaterial({ color:0xc79a72, roughness:0.9 });
-  const armR = new THREE.Mesh(new THREE.BoxGeometry(0.09,0.09,0.35), skinMat);
-  armR.position.set(0.15,-0.16,-0.35);
+  const oliveMat = new THREE.MeshStandardMaterial({ color:0x4a5a3a, roughness:0.8 });
+  const khakiMat = new THREE.MeshStandardMaterial({ color:0x8a7a5a, roughness:0.8 });
+
+  // ================= AK-47 =================
+  akModel = new THREE.Group();
+
+  // receiver (main body)
+  const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.09, 0.62), metalMat);
+  receiver.position.set(0, 0, -0.55);
+  akModel.add(receiver);
+
+  // barrel
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.018,0.02,0.62,10), metalMatLight);
+  barrel.rotation.z = Math.PI/2;
+  barrel.position.set(0, 0.01, -1.02);
+  akModel.add(barrel);
+
+  // front sight post block
+  const frontSight = new THREE.Mesh(new THREE.BoxGeometry(0.05,0.09,0.04), metalMat);
+  frontSight.position.set(0, 0.05, -1.28);
+  akModel.add(frontSight);
+  const sightPost = new THREE.Mesh(new THREE.CylinderGeometry(0.004,0.004,0.05,6), metalMat);
+  sightPost.position.set(0, 0.1, -1.28);
+  akModel.add(sightPost);
+
+  // gas tube above barrel
+  const gasTube = new THREE.Mesh(new THREE.CylinderGeometry(0.014,0.014,0.32,8), metalMatLight);
+  gasTube.rotation.z = Math.PI/2;
+  gasTube.position.set(0, 0.045, -0.95);
+  akModel.add(gasTube);
+
+  // wooden handguard (under barrel, forward of receiver)
+  const handguard = new THREE.Mesh(new THREE.BoxGeometry(0.06,0.055,0.34), woodMat);
+  handguard.position.set(0, -0.01, -0.92);
+  akModel.add(handguard);
+
+  // rear sight block
+  const rearSight = new THREE.Mesh(new THREE.BoxGeometry(0.04,0.03,0.03), metalMat);
+  rearSight.position.set(0, 0.055, -0.28);
+  akModel.add(rearSight);
+
+  // wooden stock
+  const stockShape = new THREE.Mesh(new THREE.BoxGeometry(0.065,0.11,0.42), woodMat);
+  stockShape.position.set(0, -0.02, 0.02);
+  akModel.add(stockShape);
+  const buttPlate = new THREE.Mesh(new THREE.BoxGeometry(0.075,0.13,0.03), metalMat);
+  buttPlate.position.set(0, -0.02, 0.23);
+  akModel.add(buttPlate);
+
+  // pistol grip (wood/plastic, angled)
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.05,0.16,0.06), woodMat);
+  grip.position.set(0, -0.13, -0.32);
+  grip.rotation.x = 0.35;
+  akModel.add(grip);
+
+  // curved banana magazine — approximated with several angled box segments
+  const magMat = metalMatLight;
+  const magSegs = 5;
+  for (let i=0;i<magSegs;i++){
+    const seg = new THREE.Mesh(new THREE.BoxGeometry(0.04,0.05,0.075), magMat);
+    const t = i/(magSegs-1);
+    const curve = Math.sin(t*Math.PI*0.5) * 0.09;
+    seg.position.set(0, -0.15 - t*0.22, -0.5 + curve);
+    seg.rotation.x = -t*0.55;
+    akModel.add(seg);
+  }
+
+  // charging handle
+  const handle = new THREE.Mesh(new THREE.BoxGeometry(0.02,0.015,0.06), metalMat);
+  handle.position.set(0.045, 0.02, -0.42);
+  akModel.add(handle);
+
+  // trigger guard
+  const triggerGuard = new THREE.Mesh(new THREE.TorusGeometry(0.035,0.006,6,10,Math.PI), metalMat);
+  triggerGuard.rotation.x = Math.PI/2;
+  triggerGuard.position.set(0,-0.06,-0.3);
+  akModel.add(triggerGuard);
+
+  // hands
+  const akArmR = new THREE.Mesh(new THREE.BoxGeometry(0.085,0.085,0.22), skinMat);
+  akArmR.position.set(0,-0.14,-0.32);
+  akModel.add(akArmR);
+  const akArmL = new THREE.Mesh(new THREE.BoxGeometry(0.08,0.08,0.26), skinMat);
+  akArmL.position.set(0,0.0,-0.88);
+  akModel.add(akArmL);
+
+  akModel.rotation.y = Math.PI;
+  akModel.position.set(0.28,-0.32,-0.42);
+  akModel.visible = false;
+
+  // ================= RPG-7 =================
+  rpgModel = new THREE.Group();
+
+  const launchTube = new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.055,1.15,14), oliveMat);
+  launchTube.rotation.z = Math.PI/2;
+  launchTube.position.set(0.15,-0.05,-0.55);
+  rpgModel.add(launchTube);
+
+  // muzzle bell (venturi, flared rear)
+  const venturi = new THREE.Mesh(new THREE.CylinderGeometry(0.075,0.05,0.14,14), metalMatLight);
+  venturi.rotation.z = Math.PI/2;
+  venturi.position.set(0.15,-0.05,0.03);
+  rpgModel.add(venturi);
+
+  // PG-7 warhead: nose cone + charge body + tail fins
+  const warheadNose = new THREE.Mesh(new THREE.ConeGeometry(0.062,0.22,14), metalMatLight);
+  warheadNose.rotation.z = -Math.PI/2;
+  warheadNose.position.set(0.15,-0.05,-1.35);
+  rpgModel.add(warheadNose);
+  const warheadBody = new THREE.Mesh(new THREE.CylinderGeometry(0.062,0.05,0.22,14), oliveMat);
+  warheadBody.rotation.z = Math.PI/2;
+  warheadBody.position.set(0.15,-0.05,-1.55);
+  rpgModel.add(warheadBody);
+
+  // optical sight
+  const sightMount = new THREE.Mesh(new THREE.BoxGeometry(0.03,0.1,0.16), metalMat);
+  sightMount.position.set(0.19,0.04,-0.55);
+  rpgModel.add(sightMount);
+
+  // wooden shoulder rest / grip housing
+  const rpgGrip = new THREE.Mesh(new THREE.BoxGeometry(0.06,0.17,0.09), woodMat);
+  rpgGrip.position.set(0.15,-0.22,-0.32);
+  rpgGrip.rotation.x = 0.2;
+  rpgModel.add(rpgGrip);
+  const rpgTrigger = new THREE.Mesh(new THREE.BoxGeometry(0.05,0.08,0.14), khakiMat);
+  rpgTrigger.position.set(0.15,-0.1,-0.35);
+  rpgModel.add(rpgTrigger);
+
+  const armR = new THREE.Mesh(new THREE.BoxGeometry(0.09,0.09,0.3), skinMat);
+  armR.position.set(0.15,-0.17,-0.32);
   rpgModel.add(armR);
   const armL = new THREE.Mesh(new THREE.BoxGeometry(0.09,0.09,0.3), skinMat);
-  armL.position.set(0.15,-0.02,-0.95);
+  armL.position.set(0.15,0.0,-0.95);
   rpgModel.add(armL);
+
   rpgModel.position.set(0.32,-0.35,-0.55);
 
-  // --- Dushka (handheld heavy MG representation) model ---
-  dushkaModel = new THREE.Group();
-  const gunMat = new THREE.MeshStandardMaterial({ color:0x2b2b25, roughness:0.5, metalness:0.3 });
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.1,0.14,0.55), gunMat);
-  body.position.set(0.16,-0.14,-0.55);
-  dushkaModel.add(body);
-  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.025,0.03,0.55,8), gunMat);
-  barrel.rotation.z = Math.PI/2;
-  barrel.position.set(0.16,-0.11,-1.05);
-  dushkaModel.add(barrel);
-  const mag = new THREE.Mesh(new THREE.BoxGeometry(0.06,0.22,0.1), gunMat);
-  mag.position.set(0.16,-0.32,-0.5);
-  dushkaModel.add(mag);
-  const stock = new THREE.Mesh(new THREE.BoxGeometry(0.08,0.1,0.25), new THREE.MeshStandardMaterial({color:0x4a3a28}));
-  stock.position.set(0.16,-0.15,-0.15);
-  dushkaModel.add(stock);
-  const dGrip = new THREE.Mesh(new THREE.BoxGeometry(0.06,0.18,0.06), gunMat);
-  dGrip.position.set(0.16,-0.28,-0.3);
-  dushkaModel.add(dGrip);
-  const armR2 = new THREE.Mesh(new THREE.BoxGeometry(0.09,0.09,0.28), skinMat);
-  armR2.position.set(0.16,-0.24,-0.3);
-  dushkaModel.add(armR2);
-  const armL2 = new THREE.Mesh(new THREE.BoxGeometry(0.09,0.09,0.3), skinMat);
-  armL2.position.set(0.16,-0.1,-0.85);
-  dushkaModel.add(armL2);
-  dushkaModel.position.set(0.32,-0.35,-0.55);
-  dushkaModel.visible = false;
-
   weaponGroup.add(rpgModel);
-  weaponGroup.add(dushkaModel);
+  weaponGroup.add(akModel);
   weaponGroup.position.set(0,0,0);
 }
 
@@ -599,7 +813,7 @@ function selectWeapon(w) {
   playSwitchClick();
   state.weapon = w;
   rpgModel.visible = (w==='rpg');
-  dushkaModel.visible = (w==='dushka');
+  akModel.visible = (w==='dushka');
   document.getElementById('wbox-rpg').classList.toggle('active', w==='rpg');
   document.getElementById('wbox-dushka').classList.toggle('active', w==='dushka');
   document.getElementById('btnWeapon1').classList.toggle('active', w==='rpg');
@@ -668,7 +882,7 @@ function fireRPG() {
   light.position.set(0.2,-0.2,-0.5);
   setTimeout(()=>camera.remove(light), 80);
 
-  rockets.push({ mesh: rocketMesh, pos: startPos.clone(), dir: dir.clone(), speed: 55, life: 3 });
+  rockets.push({ mesh: rocketMesh, pos: startPos.clone(), dir: dir.clone(), speed: 95, life: 3, trailTimer: 0 });
 }
 
 function fireDushkaTick(dt) {
@@ -720,6 +934,16 @@ function damageVehicle(v, dmg) {
     spawnExplosion(v.group.position.clone().add(new THREE.Vector3(0,0.8,0)), 1.4);
     scene.remove(v.group);
   }
+}
+
+function addTrailPuff(pos) {
+  const puff = new THREE.Mesh(
+    new THREE.SphereGeometry(0.18, 6, 5),
+    new THREE.MeshBasicMaterial({ color:0xcfc6b8, transparent:true, opacity:0.4 })
+  );
+  puff.position.copy(pos);
+  scene.add(puff);
+  explosionMeshes.push({ group:null, core:puff, light:null, life:0.5, maxLife:0.5, isSmoke:true, vy:0.15 });
 }
 
 function spawnExplosion(pos, scale) {
@@ -848,9 +1072,17 @@ function updateRockets(dt) {
   for (const r of rockets) {
     r.life -= dt;
     r.pos.add(r.dir.clone().multiplyScalar(r.speed*dt));
-    r.dir.y -= 0.4*dt;
+    // real RPG-7 rounds fly a flat, direct trajectory (motor-boosted) — no grenade-style arc.
+    // only a very slight drop over long distance for realism.
+    r.dir.y -= 0.03*dt;
     r.mesh.position.copy(r.pos);
     r.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), r.dir.clone().normalize());
+
+    r.trailTimer -= dt;
+    if (r.trailTimer <= 0) {
+      r.trailTimer = 0.03;
+      addTrailPuff(r.pos.clone());
+    }
 
     let exploded = false;
     if (r.pos.y <= 0.1) exploded = true;
